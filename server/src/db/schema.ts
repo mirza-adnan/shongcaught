@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const providerEnum = pgEnum("provider", ["bkash", "nagad", "rocket"]);
+export type Provider = (typeof providerEnum.enumValues)[number];
 export const userRoleEnum = pgEnum("user_role", ["agent", "ops"]);
 export const transactionTypeEnum = pgEnum("transaction_type", [
   "cash_in",
@@ -26,6 +27,7 @@ export const transactionStatusEnum = pgEnum("transaction_status", [
 export const daysOfInterestScopeEnum = pgEnum("days_of_interest_scope", ["global", "block"]);
 export const alertTypeEnum = pgEnum("alert_type", ["liquidity", "anomaly"]);
 export const alertSeverityEnum = pgEnum("alert_severity", ["low", "medium", "high", "critical"]);
+export type AlertSeverity = (typeof alertSeverityEnum.enumValues)[number];
 export const alertStatusEnum = pgEnum("alert_status", [
   "open",
   "acknowledged",
@@ -40,6 +42,7 @@ export const anomalyCategoryEnum = pgEnum("anomaly_category", [
   "balance_inconsistency",
   "other",
 ]);
+export type AnomalyCategory = (typeof anomalyCategoryEnum.enumValues)[number];
 export const caseEventTypeEnum = pgEnum("case_event_type", [
   "created",
   "assigned",

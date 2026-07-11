@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { agentProviderBalances, agents, daysOfInterest, parties, transactions } from "../../db/schema.js";
 import { AppError } from "../../middleware/errorHandler.js";
+import { analyzeAgent } from "../analysis/analysis.service.js";
 import {
   SCENARIOS,
   type ActiveScenario,
@@ -13,6 +14,7 @@ import {
 
 const PROVIDERS: Provider[] = ["bkash", "nagad", "rocket"];
 const TICK_INTERVAL_MS = 2000;
+const ANALYSIS_COOLDOWN_MS = 20_000;
 const DEFAULT_SPEED_MULTIPLIER = 60;
 const DEFAULT_SCENARIO_DURATION_HOURS = 4;
 
@@ -42,6 +44,7 @@ const agentStates = new Map<string, AgentState>();
 let allPartyIds: string[] = [];
 let dayWindows: DayOfInterestWindow[] = [];
 const activeScenarios = new Map<string, ActiveScenario>();
+const lastAnalyzedRealMs = new Map<string, number>();
 
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -250,6 +253,15 @@ async function tick() {
         );
       }),
     );
+
+    const now = Date.now();
+    for (const agent of touchedAgents) {
+      const last = lastAnalyzedRealMs.get(agent.id) ?? 0;
+      if (now - last < ANALYSIS_COOLDOWN_MS) continue;
+
+      lastAnalyzedRealMs.set(agent.id, now);
+      analyzeAgent(agent.id).catch((err) => console.error(`Analysis failed for agent ${agent.id}:`, err));
+    }
   } finally {
     ticking = false;
   }

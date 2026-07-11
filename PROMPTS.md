@@ -26,3 +26,8 @@ Checkpoint 3 (simulation engine: virtual clock, transaction generator, scenario 
 ops-only routes):
 
 okay you can continue. Also update the claude.md as you go for local memory
+
+Checkpoint 4 (AI analysis pipeline: liquidity burn-rate projection, 5-voter anomaly ensemble,
+wired into simulation ticks, ops-only recompute + role-scoped alert listing routes):
+
+okay continue
