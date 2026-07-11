@@ -17,3 +17,12 @@ heuristics + LLM voters rather than trained ML, since theres no real dataset to 
 For this first pass: build the foundation (data model, auth roles/subdomains, seed data,
 simulation engine, AI analysis pipeline) end-to-end with minimal UI, before building the two
 full dashboards.
+
+Checkpoint 2 (role-based auth + subdomain client scaffolding):
+
+okay you can continue
+
+Checkpoint 3 (simulation engine: virtual clock, transaction generator, scenario injection,
+ops-only routes):
+
+okay you can continue. Also update the claude.md as you go for local memory
