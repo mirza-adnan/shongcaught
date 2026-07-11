@@ -65,7 +65,11 @@ export function OpsDashboard() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  const alertedAgentIds = new Set(alerts.filter((a) => a.status !== "resolved").map((a) => a.agentId));
+  const alertedAgentIds = new Set(
+    alerts
+      .filter((a) => a.status !== "resolved" && a.agentId)
+      .map((a) => a.agentId!),
+  );
 
   const filteredAgents = agents.filter((agent) => {
     const q = search.trim().toLowerCase();
@@ -233,7 +237,7 @@ export function OpsDashboard() {
                       <FilterSelect
                         value={typeFilter}
                         onChange={setTypeFilter}
-                        options={["liquidity", "anomaly"]}
+                        options={["liquidity", "anomaly", "trend"]}
                         placeholder="All types"
                       />
                       <FilterSelect
@@ -262,11 +266,13 @@ export function OpsDashboard() {
                       />
                     </div>
                   </div>
-                  <AlertList
-                    alerts={scopedAlerts}
-                    onAction={handleAction}
-                    onSelectAgent={handleSelectAgentFromAlert}
-                  />
+                  <div className="scrollbar-thin max-h-[36rem] overflow-y-auto overflow-x-hidden rounded-lg border border-border/60 p-3">
+                    <AlertList
+                      alerts={scopedAlerts}
+                      onAction={handleAction}
+                      onSelectAgent={handleSelectAgentFromAlert}
+                    />
+                  </div>
                 </section>
 
                 <section>

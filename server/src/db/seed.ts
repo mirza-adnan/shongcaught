@@ -15,7 +15,11 @@ import { hashPassword } from "../utils/password.js";
 const AGENT_DEMO_PASSWORD = "AgentDemo#123";
 const OPS_DEMO_PASSWORD = "OpsDemo#123";
 const TOTAL_AGENTS = 100;
-const HISTORY_DAYS = 5;
+// 14 days (exactly 2 full weeks) so every weekday has at least 2 occurrences in history — the
+// minimum the block-level day-of-week trend forecast (trend.service.ts) needs to say anything
+// at all. 5 days (the old value) meant no weekday could ever recur, so the feature could never
+// fire against seed data.
+const HISTORY_DAYS = 14;
 const PROVIDERS = providerEnum.enumValues;
 
 const BLOCK_DEFS = [
@@ -101,6 +105,20 @@ async function seedParties(nextPhone: () => string, count: number) {
     .returning();
 }
 
+// Bangladesh's weekend is Friday-Saturday. Real mobile-money agents plausibly see a pre-weekend
+// cash-out rush on Thursday and a quieter weekend — a small, documented bias so the block-level
+// day-of-week trend forecast (trend.service.ts) has a genuine recurring pattern to find, rather
+// than pure uniform-random noise (which has no real day-of-week signal by construction).
+const WEEKDAY_VOLUME_MULTIPLIER: Record<number, number> = {
+  0: 1.0, // Sunday
+  1: 1.0, // Monday
+  2: 1.0, // Tuesday
+  3: 1.0, // Wednesday
+  4: 1.5, // Thursday — pre-weekend rush
+  5: 0.6, // Friday — weekend
+  6: 0.8, // Saturday — weekend
+};
+
 function generateAgentHistory(params: {
   agentId: string;
   openingCash: number;
@@ -113,12 +131,35 @@ function generateAgentHistory(params: {
   const providerBalances = { ...params.openingProviderBalances };
 
   const rows: (typeof transactions.$inferInsert)[] = [];
+  const dayMs = 24 * 60 * 60 * 1000;
   const now = Date.now();
-  const startMs = now - HISTORY_DAYS * 24 * 60 * 60 * 1000;
+  // Anchor day buckets to UTC midnight, not to "now"'s arbitrary time-of-day — a bucket like
+  // [now, now+24h) straddles two calendar dates, so a uniformly random offset within it mostly
+  // lands on the *next* calendar day whenever "now" is past noon, silently shifting the
+  // intended weekday bias (below) by a day.
+  const todayMidnightUtc = Math.floor(now / dayMs) * dayMs;
+  const startMs = todayMidnightUtc - HISTORY_DAYS * dayMs;
   const txCount = randInt(80, 130);
 
-  const timestamps = Array.from({ length: txCount }, () => startMs + Math.random() * (now - startMs))
-    .sort((a, b) => a - b);
+  const dayWeights = Array.from({ length: HISTORY_DAYS }, (_, d) => {
+    const weekday = new Date(startMs + d * dayMs).getUTCDay();
+    return WEEKDAY_VOLUME_MULTIPLIER[weekday] ?? 1;
+  });
+  const totalWeight = dayWeights.reduce((sum, w) => sum + w, 0);
+
+  function pickWeightedDayOffset(): number {
+    let r = Math.random() * totalWeight;
+    for (let d = 0; d < dayWeights.length; d++) {
+      r -= dayWeights[d]!;
+      if (r <= 0) return d;
+    }
+    return dayWeights.length - 1;
+  }
+
+  const timestamps = Array.from({ length: txCount }, () => {
+    const dayOffset = pickWeightedDayOffset();
+    return startMs + dayOffset * dayMs + Math.random() * dayMs;
+  }).sort((a, b) => a - b);
 
   for (const ts of timestamps) {
     const provider = pick(PROVIDERS);
@@ -243,6 +284,62 @@ async function seedDaysOfInterest(seededBlocks: Awaited<ReturnType<typeof seedBl
       endDate: inDays(4),
       expectedMultiplier: "2.50",
       note: "Countrywide surge in cash-out demand expected before Eid.",
+    },
+    {
+      scope: "global",
+      name: "Eid-ul-Adha",
+      startDate: inDays(9),
+      endDate: inDays(11),
+      expectedMultiplier: "2.80",
+      note: "Cattle-market cash withdrawals typically spike nationwide in the days before.",
+    },
+    {
+      scope: "global",
+      name: "Pohela Boishakh (Bengali New Year)",
+      startDate: inDays(20),
+      endDate: inDays(20),
+      expectedMultiplier: "1.90",
+      note: "Retail and gift spending surge nationwide.",
+    },
+    {
+      scope: "global",
+      name: "Ramadan begins",
+      startDate: inDays(30),
+      endDate: inDays(32),
+      expectedMultiplier: "1.60",
+      note: "Grocery and iftar-related cash-out demand rises in the evenings through the month.",
+    },
+    {
+      scope: "global",
+      name: "Month-end salary window",
+      startDate: inDays(5),
+      endDate: inDays(7),
+      expectedMultiplier: "1.70",
+      note: "Salary disbursement days drive a recurring nationwide cash-out spike near month-end.",
+    },
+    {
+      scope: "global",
+      name: "Independence Day",
+      startDate: inDays(14),
+      endDate: inDays(14),
+      expectedMultiplier: "1.40",
+      note: "Public holiday with moderate retail and travel-related cash demand.",
+    },
+    {
+      scope: "global",
+      name: "Victory Day",
+      startDate: inDays(45),
+      endDate: inDays(45),
+      expectedMultiplier: "1.40",
+      note: "Public holiday with moderate retail and travel-related cash demand.",
+    },
+    {
+      scope: "global",
+      name: "Durga Puja",
+      startDate: inDays(25),
+      endDate: inDays(27),
+      expectedMultiplier: "1.75",
+      note: "Regional festival with elevated retail and travel cash-out demand.",
     },
     {
       scope: "block",

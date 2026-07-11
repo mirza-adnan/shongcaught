@@ -29,3 +29,19 @@ export function listBlockAgents() {
     .get<{ block: Block; agents: AgentWithBalances[] }>("/agents")
     .then((res) => res.data);
 }
+
+export interface AgentTransaction {
+  id: string;
+  provider: "bkash" | "nagad" | "rocket";
+  type: "cash_in" | "cash_out" | "send_money" | "payment";
+  amount: string;
+  status: "success" | "failed" | "pending";
+  occurredAt: string;
+  partyName: string | null;
+}
+
+export function getMyTransactions() {
+  return api
+    .get<{ transactions: AgentTransaction[] }>("/agents/me/transactions")
+    .then((res) => res.data.transactions);
+}

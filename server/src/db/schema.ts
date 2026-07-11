@@ -25,7 +25,7 @@ export const transactionStatusEnum = pgEnum("transaction_status", [
   "pending",
 ]);
 export const daysOfInterestScopeEnum = pgEnum("days_of_interest_scope", ["global", "block"]);
-export const alertTypeEnum = pgEnum("alert_type", ["liquidity", "anomaly"]);
+export const alertTypeEnum = pgEnum("alert_type", ["liquidity", "anomaly", "trend"]);
 export type AlertType = (typeof alertTypeEnum.enumValues)[number];
 export const alertSeverityEnum = pgEnum("alert_severity", ["low", "medium", "high", "critical"]);
 export type AlertSeverity = (typeof alertSeverityEnum.enumValues)[number];
@@ -58,7 +58,7 @@ export const blocks = pgTable("blocks", {
   name: text("name").notNull(),
   centerLat: doublePrecision("center_lat").notNull(),
   centerLng: doublePrecision("center_lng").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const agents = pgTable("agents", {
@@ -71,7 +71,7 @@ export const agents = pgTable("agents", {
   lat: doublePrecision("lat").notNull(),
   lng: doublePrecision("lng").notNull(),
   cashBalance: numeric("cash_balance", { precision: 14, scale: 2 }).notNull().default("0"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const agentProviderBalances = pgTable(
@@ -91,7 +91,7 @@ export const parties = pgTable("parties", {
   id: uuid("id").primaryKey().defaultRandom(),
   phone: text("phone").notNull().unique(),
   name: text("name").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const users = pgTable("users", {
@@ -104,8 +104,8 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").notNull(),
   agentId: uuid("agent_id").references(() => agents.id),
   blockId: uuid("block_id").references(() => blocks.id),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const transactions = pgTable("transactions", {
@@ -120,7 +120,7 @@ export const transactions = pgTable("transactions", {
   status: transactionStatusEnum("status").notNull().default("success"),
   cashBalanceAfter: numeric("cash_balance_after", { precision: 14, scale: 2 }).notNull(),
   providerBalanceAfter: numeric("provider_balance_after", { precision: 14, scale: 2 }).notNull(),
-  occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
   scenarioTag: text("scenario_tag"),
 });
 
@@ -129,8 +129,8 @@ export const daysOfInterest = pgTable("days_of_interest", {
   scope: daysOfInterestScopeEnum("scope").notNull(),
   blockId: uuid("block_id").references(() => blocks.id),
   name: text("name").notNull(),
-  startDate: timestamp("start_date").notNull(),
-  endDate: timestamp("end_date").notNull(),
+  startDate: timestamp("start_date", { withTimezone: true }).notNull(),
+  endDate: timestamp("end_date", { withTimezone: true }).notNull(),
   expectedMultiplier: numeric("expected_multiplier", { precision: 5, scale: 2 })
     .notNull()
     .default("1"),
@@ -141,9 +141,9 @@ export const alerts = pgTable("alerts", {
   id: uuid("id").primaryKey().defaultRandom(),
   type: alertTypeEnum("type").notNull(),
   severity: alertSeverityEnum("severity").notNull(),
-  agentId: uuid("agent_id")
-    .notNull()
-    .references(() => agents.id),
+  // Nullable because block-level trend alerts aren't about any single agent — they're a
+  // forecast for the whole block (see analysis/trend.service.ts).
+  agentId: uuid("agent_id").references(() => agents.id),
   provider: providerEnum("provider"),
   blockId: uuid("block_id")
     .notNull()
@@ -155,15 +155,20 @@ export const alerts = pgTable("alerts", {
   confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
   status: alertStatusEnum("status").notNull().default("open"),
   ownerUserId: uuid("owner_user_id").references(() => users.id),
-  predictedShortageAt: timestamp("predicted_shortage_at"),
+  predictedShortageAt: timestamp("predicted_shortage_at", { withTimezone: true }),
   category: anomalyCategoryEnum("category"),
   votes: jsonb("votes"),
   // Which simulation scenario (if any) tagged the transactions behind this alert's window —
   // lets the validation-metrics endpoint tell "flagged a deliberately-triggered scenario" apart
   // from "flagged ambient random-walk noise" without any manual labeling.
   scenarioTag: text("scenario_tag"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  // Set when the affected agent dismisses this alert from their own dashboard — separate from
+  // `status`, which is ops's coordination state. Only used for per-agent alerts (agentId set);
+  // a single column can't represent per-agent acknowledgment of a shared block-level trend
+  // alert, so those aren't acknowledgeable this way.
+  agentAcknowledgedAt: timestamp("agent_acknowledged_at", { withTimezone: true }),
 });
 
 export const caseEvents = pgTable("case_events", {
@@ -174,7 +179,7 @@ export const caseEvents = pgTable("case_events", {
   type: caseEventTypeEnum("type").notNull(),
   actorUserId: uuid("actor_user_id").references(() => users.id),
   note: text("note"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type User = typeof users.$inferSelect;

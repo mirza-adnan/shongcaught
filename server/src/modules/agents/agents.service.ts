@@ -1,6 +1,6 @@
-import { eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { agentProviderBalances, agents, blocks } from "../../db/schema.js";
+import { agentProviderBalances, agents, blocks, parties, transactions } from "../../db/schema.js";
 import { AppError } from "../../middleware/errorHandler.js";
 
 async function withBalances<T extends { id: string }>(agentRows: T[]) {
@@ -41,4 +41,22 @@ export async function getBlock(blockId: string) {
   const [block] = await db.select().from(blocks).where(eq(blocks.id, blockId));
   if (!block) throw new AppError("Block not found", 404);
   return block;
+}
+
+export async function getRecentTransactionsForAgent(agentId: string, limit = 30) {
+  return db
+    .select({
+      id: transactions.id,
+      provider: transactions.provider,
+      type: transactions.type,
+      amount: transactions.amount,
+      status: transactions.status,
+      occurredAt: transactions.occurredAt,
+      partyName: parties.name,
+    })
+    .from(transactions)
+    .leftJoin(parties, eq(transactions.partyId, parties.id))
+    .where(eq(transactions.agentId, agentId))
+    .orderBy(desc(transactions.occurredAt))
+    .limit(limit);
 }

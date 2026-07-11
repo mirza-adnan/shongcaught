@@ -29,6 +29,27 @@
       "when": 1783800642419,
       "tag": "0003_worried_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783802873862,
+      "tag": "0004_smart_misty_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783803634310,
+      "tag": "0005_lethal_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783807096566,
+      "tag": "0006_open_bishop",
+      "breakpoints": true
     }
   ]
 }

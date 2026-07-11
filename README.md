@@ -1,8 +1,12 @@
-# Hackathon Template
+# Super Agent Liquidity & Anomaly Prototype
 
-A modular starting point for hackathon projects: Express + TypeScript API, React + Vite
-frontend, Postgres via Drizzle ORM, JWT + Google auth, and an AI module with automatic
-provider fallback.
+A decision-support prototype for multi-provider (bKash/Nagad/Rocket) mobile-money agents: a
+unified view of shared cash and per-provider e-money balances, forward-looking liquidity
+pressure, explainable anomaly flags, and a coordinated alert/case workflow between agents and
+provider operations teams. See `Statement.md` for the full challenge brief.
+
+Built on a two-package starter: `server/` (Express + TypeScript API) and `client/` (React +
+Vite + Tailwind + shadcn/ui).
 
 ## Structure
 
@@ -41,7 +45,7 @@ client/   React + Vite + Tailwind + shadcn/ui
    Postgres instance is probably intercepting the port — either stop it or change
    `POSTGRES_PORT` and `DATABASE_URL` to a free port).
 
-3. Install dependencies and run migrations:
+3. Install dependencies, run migrations, and seed synthetic data:
 
    ```
    cd server
@@ -52,6 +56,8 @@ client/   React + Vite + Tailwind + shadcn/ui
    npm run dev
    ```
 
+   `npm run db:seed` prints the demo agent and ops login credentials it creates.
+
 4. In a second terminal, start the client:
 
    ```
@@ -60,17 +66,22 @@ client/   React + Vite + Tailwind + shadcn/ui
    npm run dev
    ```
 
-The API runs on `http://localhost:4000`, the client on `http://localhost:5173`.
+The API runs on `http://localhost:4000`. The client is a single app at
+`http://localhost:5173` with one login page for both roles.
+
+## Roles
+
+There is no self-registration: agent and operations accounts are provisioned by
+`npm run db:seed`. Everyone signs in at `http://localhost:5173` — the login page has an
+Agent/Operations toggle (for clarity only; it doesn't gate anything), and after signing in you
+land on the agent dashboard (cash + provider balances, alerts) or the operations dashboard
+(block agents, alert coordination) based on the account's actual role.
 
 ## Environment variables you need to obtain
 
 All variables are listed in each `.env.example`. The ones that require a free account:
 
 - `JWT_SECRET` — any long random string you generate yourself (e.g. `openssl rand -hex 32`).
-- `GOOGLE_CLIENT_ID` / `VITE_GOOGLE_CLIENT_ID` — create an OAuth 2.0 Client ID at
-  [Google Cloud Console](https://console.cloud.google.com/apis/credentials) (free). Set the
-  authorized JavaScript origin to `http://localhost:5173`. Use the same client ID in both
-  `server/.env` and `client/.env`.
 - `GROQ_API_KEY` — free API key from [console.groq.com](https://console.groq.com/keys).
 - `GEMINI_API_KEY` — free API key from [Google AI Studio](https://aistudio.google.com/apikey).
 - `OPENROUTER_API_KEY` — free API key from [openrouter.ai](https://openrouter.ai/keys), used
@@ -89,8 +100,6 @@ npm run db:migrate     # applies it to the database
 npm run db:seed        # wipes and reseeds synthetic blocks/agents/transactions
 npm run db:studio      # browse the database in Drizzle Studio
 ```
-
-`npm run db:seed` prints the demo agent and ops login credentials it creates.
 
 ## Code quality (SonarQube)
 

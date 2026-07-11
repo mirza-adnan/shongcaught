@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, isNull } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import {
   alerts,
@@ -50,8 +50,9 @@ async function getBlockOpsOwner(blockId: string): Promise<string | null> {
 }
 
 interface UpsertAlertInput {
-  type: "liquidity" | "anomaly";
-  agentId: string;
+  type: "liquidity" | "anomaly" | "trend";
+  // null for block-level trend alerts, which aren't about any single agent.
+  agentId: string | null;
   blockId: string;
   provider?: Provider | null;
   severity: AlertSeverity;
@@ -68,10 +69,17 @@ interface UpsertAlertInput {
 
 export async function upsertAlert(input: UpsertAlertInput) {
   const conditions = [
-    eq(alerts.agentId, input.agentId),
+    input.agentId ? eq(alerts.agentId, input.agentId) : isNull(alerts.agentId),
+    eq(alerts.blockId, input.blockId),
     eq(alerts.type, input.type),
-    eq(alerts.status, "open"),
   ];
+  // Liquidity/anomaly alerts only dedup against an *open* alert — once acted on, a fresh
+  // occurrence of the same problem should surface as a new alert. Trend forecasts are
+  // different: they're one ongoing forecast per block, not a recurring incident, so there
+  // should only ever be a single row per block regardless of status — re-analysis just keeps
+  // updating that same row's evidence, and if ops already dismissed/acknowledged it, it stays
+  // that way instead of quietly reappearing every cooldown cycle.
+  if (input.type !== "trend") conditions.push(eq(alerts.status, "open"));
   if (input.provider) conditions.push(eq(alerts.provider, input.provider));
   if (input.category) conditions.push(eq(alerts.category, input.category));
 
@@ -172,6 +180,54 @@ export async function applyAlertAction(params: {
     type: newStatus,
     actorUserId: params.actorUserId,
     note: params.note ?? null,
+  });
+
+  return updated!;
+}
+
+export async function agentRequestSupport(params: {
+  alertId: string;
+  agentId: string;
+  actorUserId: string;
+  note: string;
+}) {
+  const [alert] = await db.select().from(alerts).where(eq(alerts.id, params.alertId));
+  if (!alert) throw new AppError("Alert not found", 404);
+  if (alert.agentId !== params.agentId) {
+    throw new AppError("This alert isn't yours to request support on", 403);
+  }
+
+  await db.insert(caseEvents).values({
+    alertId: alert.id,
+    type: "note",
+    actorUserId: params.actorUserId,
+    note: `Agent requested support: ${params.note}`,
+  });
+
+  return alert;
+}
+
+export async function agentAcknowledgeAlert(params: { alertId: string; agentId: string; actorUserId: string }) {
+  const [alert] = await db.select().from(alerts).where(eq(alerts.id, params.alertId));
+  if (!alert) throw new AppError("Alert not found", 404);
+  if (alert.agentId !== params.agentId) {
+    // Includes block-level trend alerts (agentId null) — those are shared across every agent
+    // in the block, so one agent acknowledging it can't hide it for everyone else via a single
+    // column. Only per-agent alerts (liquidity/anomaly) can be acknowledged this way.
+    throw new AppError("This alert isn't yours to acknowledge", 403);
+  }
+
+  const [updated] = await db
+    .update(alerts)
+    .set({ agentAcknowledgedAt: new Date() })
+    .where(eq(alerts.id, alert.id))
+    .returning();
+
+  await db.insert(caseEvents).values({
+    alertId: alert.id,
+    type: "note",
+    actorUserId: params.actorUserId,
+    note: "Acknowledged by the agent and removed from their dashboard.",
   });
 
   return updated!;

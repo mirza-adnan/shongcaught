@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { agents, type AlertSeverity, type AnomalyCategory, type Provider } from "../../db/schema.js";
-import { generateTextFromAllProviders } from "../ai/ai.service.js";
+import { generateText } from "../ai/ai.service.js";
 import { abstain, type VoterResult } from "./analysis.types.js";
 import { getLatestTransactionTime, getRecentTransactions, upsertAlert } from "./analysis.shared.js";
 
@@ -76,7 +76,7 @@ async function cachedLlmVoter(prompt: string): Promise<VoterResult> {
     return cached.result;
   }
 
-  const result = await llmEnsembleVoter(prompt).catch(() => abstain("llm"));
+  const result = await llmVoter(prompt).catch(() => abstain("llm"));
   llmCache.set(key, { result, expiresAt: Date.now() + LLM_CACHE_TTL_MS });
   return result;
 }
@@ -227,87 +227,28 @@ function buildLlmPrompt(provider: Provider, rows: TxRow[]): string {
   );
 }
 
-interface LlmModelVerdict {
-  provider: string;
-  fired: boolean;
-  category: AnomalyCategory;
-  severity: AlertSeverity;
-  confidence: number;
-  rationale: string;
-}
-
-function parseLlmResponse(provider: string, text: string): LlmModelVerdict | null {
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-
+async function llmVoter(prompt: string): Promise<VoterResult> {
   try {
+    const { text } = await generateText({ prompt, temperature: 0.2, maxTokens: 300 });
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("No JSON in LLM response");
+
     const parsed = JSON.parse(match[0]);
+    const category = ALLOWED_CATEGORIES.includes(parsed.category) ? parsed.category : "other";
+    const severity = ALLOWED_SEVERITIES.includes(parsed.severity) ? parsed.severity : "low";
+
     return {
-      provider,
+      voter: "llm",
       fired: Boolean(parsed.fired),
-      category: ALLOWED_CATEGORIES.includes(parsed.category) ? parsed.category : "other",
-      severity: ALLOWED_SEVERITIES.includes(parsed.severity) ? parsed.severity : "low",
+      category,
+      severity,
       confidence: typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
-      rationale: String(parsed.rationale ?? "").slice(0, 200),
+      rationale: String(parsed.rationale ?? "").slice(0, 300),
     };
-  } catch {
-    return null;
+  } catch (err) {
+    console.error("llmVoter failed:", err);
+    return { voter: "llm", fired: false, confidence: 0, rationale: "LLM voter unavailable for this check." };
   }
-}
-
-// Queries all 3 configured providers (Groq, Gemini, OpenRouter) in parallel with the same
-// prompt and combines their independent judgments into a single verdict — a strict majority
-// of the models that actually answered must agree something's fired, rather than any one
-// model's opinion deciding alone. This also gives redundancy against a single provider being
-// rate-limited/out of quota (a real, repeated issue in this project): the ensemble still
-// produces a verdict as long as at least one model responds, and gets more confident as more
-// of them agree.
-async function llmEnsembleVoter(prompt: string): Promise<VoterResult> {
-  const responses = await generateTextFromAllProviders({ prompt, temperature: 0.2, maxTokens: 300 });
-  const verdicts = responses
-    .map((r) => parseLlmResponse(r.provider, r.text))
-    .filter((v): v is LlmModelVerdict => v !== null);
-
-  if (verdicts.length === 0) {
-    return {
-      voter: "llm",
-      fired: false,
-      confidence: 0,
-      rationale: "LLM ensemble unavailable for this check (every provider failed, timed out, or is rate-limited).",
-    };
-  }
-
-  const firedVerdicts = verdicts.filter((v) => v.fired);
-  const fired = firedVerdicts.length * 2 > verdicts.length;
-
-  if (!fired) {
-    return {
-      voter: "llm",
-      fired: false,
-      confidence: (verdicts.reduce((s, v) => s + v.confidence, 0) / verdicts.length) * 0.3,
-      rationale: `${firedVerdicts.length}/${verdicts.length} model(s) (${verdicts.map((v) => v.provider).join(", ")}) flagged this window — not a majority.`,
-    };
-  }
-
-  const category = pickMajorityCategory(firedVerdicts);
-  const severity = firedVerdicts.reduce<AlertSeverity>(
-    (max, v) => (SEVERITY_RANK[v.severity] > SEVERITY_RANK[max] ? v.severity : max),
-    "low",
-  );
-  const confidence =
-    (firedVerdicts.length / verdicts.length) *
-    (firedVerdicts.reduce((s, v) => s + v.confidence, 0) / firedVerdicts.length);
-
-  return {
-    voter: "llm",
-    fired: true,
-    category,
-    severity,
-    confidence,
-    rationale: `${firedVerdicts.length}/${verdicts.length} models agreed: ${firedVerdicts
-      .map((v) => `${v.provider} — ${v.rationale}`)
-      .join(" | ")}`,
-  };
 }
 
 async function analyzeAgentProvider(

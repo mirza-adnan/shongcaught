@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { Alert, LiquidityEvidence, AnomalyEvidence } from "@/lib/alertsApi";
+import type { Alert, LiquidityEvidence, AnomalyEvidence, TrendEvidence } from "@/lib/alertsApi";
 
 const SEVERITY_STYLES: Record<Alert["severity"], string> = {
   low: "bg-muted text-muted-foreground",
@@ -20,10 +20,14 @@ export function AlertList({
   alerts,
   onAction,
   onSelectAgent,
+  onAcknowledge,
+  onRequestSupport,
 }: {
   alerts: Alert[];
   onAction?: (alertId: string, action: "acknowledge" | "escalate" | "resolve") => void;
   onSelectAgent?: (agentId: string) => void;
+  onAcknowledge?: (alertId: string) => void;
+  onRequestSupport?: (alertId: string) => void;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
@@ -45,12 +49,14 @@ export function AlertList({
       {alerts.map((alert) => {
         const expanded = expandedIds.has(alert.id);
 
+        const selectable = Boolean(onSelectAgent && alert.agentId);
+
         return (
           <div
             key={alert.id}
-            onClick={() => onSelectAgent?.(alert.agentId)}
+            onClick={() => alert.agentId && onSelectAgent?.(alert.agentId)}
             className={`rounded-lg border border-border/60 p-4 ${
-              onSelectAgent ? "cursor-pointer transition-colors hover:border-border" : ""
+              selectable ? "cursor-pointer transition-colors hover:border-border" : ""
             }`}
           >
             <div className="mb-1 flex items-center justify-between gap-2">
@@ -115,24 +121,40 @@ export function AlertList({
             )}
 
             {onAction && alert.status !== "resolved" && (
-              <div className="mt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
+              <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                 {alert.status === "open" && (
-                  <Button variant="outline" className="px-4" onClick={() => onAction(alert.id, "acknowledge")}>
-                    Alert agent
+                  <Button variant="outline" size="sm" onClick={() => onAction(alert.id, "acknowledge")}>
+                    {alert.type === "trend" ? "Alert all agents in block" : "Alert agent"}
                   </Button>
                 )}
-                {alert.status !== "escalated" && (
+                {alert.type !== "trend" && alert.status !== "escalated" && (
                   <Button
                     variant="outline"
-                    className="px-4 text-orange-500 hover:text-orange-500"
+                    size="sm"
+                    className="text-orange-500 hover:text-orange-500"
                     onClick={() => onAction(alert.id, "escalate")}
                   >
                     Escalate to risk/compliance
                   </Button>
                 )}
-                <Button className="px-4" onClick={() => onAction(alert.id, "resolve")}>
+                <Button size="sm" onClick={() => onAction(alert.id, "resolve")}>
                   Dismiss
                 </Button>
+              </div>
+            )}
+
+            {(onAcknowledge || onRequestSupport) && alert.agentId && (
+              <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                {onRequestSupport && (
+                  <Button variant="outline" size="sm" onClick={() => onRequestSupport(alert.id)}>
+                    Request support
+                  </Button>
+                )}
+                {onAcknowledge && (
+                  <Button size="sm" onClick={() => onAcknowledge(alert.id)}>
+                    Acknowledge
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -153,6 +175,20 @@ function EvidenceView({ alert }: { alert: Alert }) {
         <Metric label="Current balance" value={`৳${Math.round(evidence.currentBalance).toLocaleString()}`} />
         <Metric label="Largest gap" value={`${evidence.maxGapHours.toFixed(1)}h`} />
         <Metric label="Projected hours to zero" value={evidence.hoursToZero.toFixed(1)} />
+      </dl>
+    );
+  }
+
+  if (alert.type === "trend") {
+    const evidence = alert.evidence as TrendEvidence;
+    return (
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-3">
+        <Metric label="Window" value={`${evidence.windowDays}d`} />
+        <Metric label="Weekday" value={evidence.weekday} />
+        <Metric label="Observed occurrences" value={evidence.occurrences} />
+        <Metric label="Avg on that day" value={evidence.avgOnDay.toFixed(1)} />
+        <Metric label="Overall avg/day" value={evidence.overallAvgPerDay.toFixed(1)} />
+        <Metric label="Busier by" value={`${Math.round((evidence.ratio - 1) * 100)}%`} />
       </dl>
     );
   }

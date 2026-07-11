@@ -3,6 +3,7 @@ import { db } from "../../db/index.js";
 import { agentProviderBalances, agents, blocks, daysOfInterest, parties, transactions } from "../../db/schema.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { analyzeAgent } from "../analysis/analysis.service.js";
+import { analyzeTrend } from "../analysis/trend.service.js";
 import {
   SCENARIOS,
   type ActiveScenario,
@@ -15,6 +16,9 @@ import {
 const PROVIDERS: Provider[] = ["bkash", "nagad", "rocket"];
 const TICK_INTERVAL_MS = 2000;
 const ANALYSIS_COOLDOWN_MS = 20_000;
+// Day-of-week trend forecasting moves slowly by nature — no need to recompute it anywhere near
+// as often as the per-agent liquidity/anomaly checks.
+const TREND_COOLDOWN_MS = 5 * 60 * 1000;
 const DEFAULT_SPEED_MULTIPLIER = 60;
 const DEFAULT_SCENARIO_DURATION_SECONDS = 4 * 60 * 60;
 
@@ -45,6 +49,7 @@ let allPartyIds: string[] = [];
 let dayWindows: DayOfInterestWindow[] = [];
 const activeScenarios = new Map<string, ActiveScenario>();
 const lastAnalyzedRealMs = new Map<string, number>();
+const lastTrendAnalyzedRealMs = new Map<string, number>();
 let cachedFirstAgentId: string | null = null;
 
 function randInt(min: number, max: number): number {
@@ -95,6 +100,7 @@ async function loadState() {
   cachedFirstAgentId = agentRows[0]?.id ?? null;
   activeScenarios.clear();
   lastAnalyzedRealMs.clear();
+  lastTrendAnalyzedRealMs.clear();
 }
 
 /**
@@ -289,6 +295,15 @@ async function tick() {
 
       lastAnalyzedRealMs.set(agent.id, now);
       analyzeAgent(agent.id).catch((err) => console.error(`Analysis failed for agent ${agent.id}:`, err));
+    }
+
+    const touchedBlockIds = new Set(touchedAgents.map((agent) => agent.blockId));
+    for (const blockId of touchedBlockIds) {
+      const last = lastTrendAnalyzedRealMs.get(blockId) ?? 0;
+      if (now - last < TREND_COOLDOWN_MS) continue;
+
+      lastTrendAnalyzedRealMs.set(blockId, now);
+      analyzeTrend(blockId).catch((err) => console.error(`Trend analysis failed for block ${blockId}:`, err));
     }
   } catch (err) {
     console.error("Simulation tick failed:", err);

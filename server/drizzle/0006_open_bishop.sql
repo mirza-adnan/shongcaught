@@ -1,0 +1,1 @@
+ALTER TABLE "alerts" ADD COLUMN "agent_acknowledged_at" timestamp with time zone;

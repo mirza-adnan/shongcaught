@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../auth/auth.middleware.js";
 import {
+  agentAckHandler,
+  agentRequestSupportHandler,
   alertActionHandler,
   listAlertsHandler,
   metricsHandler,
@@ -17,4 +19,6 @@ analysisRouter.use(requireAuth);
 
 analysisRouter.get("/alerts", listAlertsHandler);
 analysisRouter.patch("/alerts/:id", requireRole("ops"), alertActionHandler);
+analysisRouter.patch("/alerts/:id/agent-ack", requireRole("agent"), agentAckHandler);
+analysisRouter.post("/alerts/:id/request-support", requireRole("agent"), agentRequestSupportHandler);
 analysisRouter.post("/recompute", requireRole("ops"), recomputeHandler);

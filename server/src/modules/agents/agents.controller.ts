@@ -19,3 +19,10 @@ export async function listHandler(req: Request, res: Response) {
 
   res.status(200).json({ block, agents: agentsInBlock });
 }
+
+export async function meTransactionsHandler(req: Request, res: Response) {
+  if (!req.agentId) throw new AppError("Account is not linked to an agent", 403);
+
+  const transactions = await agentsService.getRecentTransactionsForAgent(req.agentId);
+  res.status(200).json({ transactions });
+}
