@@ -5,7 +5,9 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
-  avatarUrl?: string | null;
+  role: "agent" | "ops";
+  agentId?: string | null;
+  blockId?: string | null;
 }
 
 interface AuthState {

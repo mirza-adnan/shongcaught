@@ -3,6 +3,9 @@ import { env } from "../config/env.js";
 
 export interface JwtPayload {
   userId: string;
+  role: "agent" | "ops";
+  agentId?: string | null;
+  blockId?: string | null;
 }
 
 export function signToken(payload: JwtPayload): string {
