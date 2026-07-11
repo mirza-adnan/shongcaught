@@ -1,12 +1,32 @@
-# Super Agent Liquidity & Anomaly Prototype
+# ShongCaught — Super Agent Liquidity & Anomaly Prototype
 
 A decision-support prototype for multi-provider (bKash/Nagad/Rocket) mobile-money agents: a
 unified view of shared cash and per-provider e-money balances, forward-looking liquidity
-pressure, explainable anomaly flags, and a coordinated alert/case workflow between agents and
-provider operations teams. See `Statement.md` for the full challenge brief.
+pressure, explainable anomaly flags, block-level demand forecasting, and a coordinated
+alert/case workflow between agents and provider operations teams. See `Statement.md` for the
+full challenge brief, `Instructions.md` for the product-owner notes on top of it, and
+`flow.md` for a feature-by-feature judge walkthrough (with demo credentials).
 
 Built on a two-package starter: `server/` (Express + TypeScript API) and `client/` (React +
 Vite + Tailwind + shadcn/ui).
+
+## Key features
+
+- **Liquidity forecasting** — per-agent, per-provider (plus physical cash) time-to-shortage
+  projection from recent burn rate, with confidence penalized for sparse/gappy data.
+- **Anomaly detection** — a 5-check ensemble (velocity, near-identical amounts, structuring,
+  balance reconciliation, and an LLM voter) requiring ≥2/5 agreement before an alert fires.
+  Never uses the word "fraud" — only "unusual"/"requires review", with evidence attached.
+- **Block-level demand forecasting** — a day-of-week trend detector pooling every agent in a
+  block to flag "this weekday historically runs busier" a few days ahead.
+- **Case coordination** — alerts have an owner, a status workflow (open → acknowledged →
+  escalated/resolved), and a full audit trail; agents can acknowledge or request support back
+  to their ops team.
+- **Simulation engine** — a virtual-clock transaction generator with named failure scenarios,
+  controllable from the public, no-login `/simulator` page (a judge/demo convenience, not part
+  of the agent/ops product surface).
+- **Validation metrics** — a real false-positive-rate proxy computed from every alert ever
+  written, comparing scenario-triggered vs. ambient-noise alerts (see `/simulator`).
 
 ## Structure
 
@@ -82,13 +102,15 @@ land on the agent dashboard (cash + provider balances, alerts) or the operations
 All variables are listed in each `.env.example`. The ones that require a free account:
 
 - `JWT_SECRET` — any long random string you generate yourself (e.g. `openssl rand -hex 32`).
+- `OPENAI_API_KEY` — API key from [platform.openai.com](https://platform.openai.com/api-keys).
+  Uses `gpt-4o-mini` — cheap and fast, plenty for a short structured-JSON judgment.
 - `GROQ_API_KEY` — free API key from [console.groq.com](https://console.groq.com/keys).
 - `GEMINI_API_KEY` — free API key from [Google AI Studio](https://aistudio.google.com/apikey).
 - `OPENROUTER_API_KEY` — free API key from [openrouter.ai](https://openrouter.ai/keys), used
   with a `:free` model so no billing is required.
 
-The AI module tries Groq first, then Gemini, then OpenRouter, falling back automatically if a
-provider times out or errors. You only need one configured to get started.
+The AI module tries OpenAI first, then Groq, then Gemini, then OpenRouter, falling back
+automatically if a provider times out or errors. You only need one configured to get started.
 
 ## Database
 
