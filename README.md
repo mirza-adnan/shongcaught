@@ -48,6 +48,7 @@ client/   React + Vite + Tailwind + shadcn/ui
    npm install
    npm run db:generate
    npm run db:migrate
+   npm run db:seed
    npm run dev
    ```
 
@@ -85,5 +86,22 @@ Schema lives in `server/src/db/schema.ts`. After changing it:
 ```
 npm run db:generate   # creates a migration in server/drizzle
 npm run db:migrate     # applies it to the database
+npm run db:seed        # wipes and reseeds synthetic blocks/agents/transactions
 npm run db:studio      # browse the database in Drizzle Studio
 ```
+
+`npm run db:seed` prints the demo agent and ops login credentials it creates.
+
+## Code quality (SonarQube)
+
+A local SonarQube instance is available via a separate compose file (kept out of the main
+`docker-compose.yml` since it's a heavier, optional dev tool):
+
+```
+docker compose -f docker-compose.sonarqube.yml up -d
+```
+
+SonarQube runs at `http://localhost:9000` (default login `admin`/`admin`, changed on first
+login). Scan the repo with the SonarScanner CLI (or its Docker image) using the
+`sonar-project.properties` at the repo root, pointing `sonar.host.url` at that instance and
+supplying a project token generated in the SonarQube UI.

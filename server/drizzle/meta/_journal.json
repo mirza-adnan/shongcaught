@@ -8,6 +8,13 @@
       "when": 1783708797047,
       "tag": "0000_spotty_giant_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783762088430,
+      "tag": "0001_talented_terrax",
+      "breakpoints": true
     }
   ]
 }

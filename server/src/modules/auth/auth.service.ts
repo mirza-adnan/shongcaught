@@ -17,7 +17,7 @@ export async function signup(email: string, password: string, name: string) {
 
   const [user] = await db
     .insert(users)
-    .values({ email, name, passwordHash })
+    .values({ email, name, passwordHash, role: "agent" })
     .returning();
 
   const token = signToken({ userId: user.id });
@@ -60,6 +60,7 @@ export async function loginWithGoogle(idToken: string) {
         name: profile.name,
         googleId: profile.googleId,
         avatarUrl: profile.avatarUrl,
+        role: "agent",
       })
       .returning();
   } else if (!user.googleId) {
