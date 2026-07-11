@@ -9,6 +9,7 @@ import {
   type AnomalyCategory,
   type Provider,
 } from "../../db/schema.js";
+import { AppError } from "../../middleware/errorHandler.js";
 
 export async function getRecentTransactions(
   agentId: string,
@@ -56,11 +57,13 @@ interface UpsertAlertInput {
   severity: AlertSeverity;
   title: string;
   description: string;
+  banglishSummary: string;
   evidence: unknown;
   confidence: number;
   predictedShortageAt?: Date | null;
   category?: AnomalyCategory | null;
   votes?: unknown;
+  scenarioTag?: string | null;
 }
 
 export async function upsertAlert(input: UpsertAlertInput) {
@@ -85,10 +88,12 @@ export async function upsertAlert(input: UpsertAlertInput) {
         severity: input.severity,
         title: input.title,
         description: input.description,
+        banglishSummary: input.banglishSummary,
         evidence: input.evidence,
         confidence: input.confidence.toFixed(3),
         predictedShortageAt: input.predictedShortageAt ?? null,
         votes: input.votes ?? undefined,
+        scenarioTag: input.scenarioTag ?? null,
       })
       .where(eq(alerts.id, existing.id))
       .returning();
@@ -108,11 +113,13 @@ export async function upsertAlert(input: UpsertAlertInput) {
       provider: input.provider ?? null,
       title: input.title,
       description: input.description,
+      banglishSummary: input.banglishSummary,
       evidence: input.evidence,
       confidence: input.confidence.toFixed(3),
       predictedShortageAt: input.predictedShortageAt ?? null,
       category: input.category ?? null,
       votes: input.votes ?? null,
+      scenarioTag: input.scenarioTag ?? null,
       ownerUserId,
     })
     .returning();
@@ -126,4 +133,46 @@ export async function upsertAlert(input: UpsertAlertInput) {
   });
 
   return { alert: created!, created: true };
+}
+
+const ALERT_ACTIONS = {
+  acknowledge: "acknowledged",
+  escalate: "escalated",
+  resolve: "resolved",
+} as const;
+
+export type AlertAction = keyof typeof ALERT_ACTIONS;
+
+export async function applyAlertAction(params: {
+  alertId: string;
+  blockId: string;
+  action: AlertAction;
+  actorUserId: string;
+  note?: string;
+}) {
+  const [alert] = await db.select().from(alerts).where(eq(alerts.id, params.alertId));
+  if (!alert) throw new AppError("Alert not found", 404);
+  if (alert.blockId !== params.blockId) {
+    throw new AppError("Alert belongs to a different block", 403);
+  }
+
+  const newStatus = ALERT_ACTIONS[params.action];
+
+  const [updated] = await db
+    .update(alerts)
+    .set({
+      status: newStatus,
+      resolvedAt: params.action === "resolve" ? new Date() : alert.resolvedAt,
+    })
+    .where(eq(alerts.id, alert.id))
+    .returning();
+
+  await db.insert(caseEvents).values({
+    alertId: alert.id,
+    type: newStatus,
+    actorUserId: params.actorUserId,
+    note: params.note ?? null,
+  });
+
+  return updated!;
 }

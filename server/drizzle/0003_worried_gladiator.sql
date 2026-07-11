@@ -1,0 +1,1 @@
+ALTER TABLE "alerts" ADD COLUMN "scenario_tag" text;

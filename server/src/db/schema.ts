@@ -26,6 +26,7 @@ export const transactionStatusEnum = pgEnum("transaction_status", [
 ]);
 export const daysOfInterestScopeEnum = pgEnum("days_of_interest_scope", ["global", "block"]);
 export const alertTypeEnum = pgEnum("alert_type", ["liquidity", "anomaly"]);
+export type AlertType = (typeof alertTypeEnum.enumValues)[number];
 export const alertSeverityEnum = pgEnum("alert_severity", ["low", "medium", "high", "critical"]);
 export type AlertSeverity = (typeof alertSeverityEnum.enumValues)[number];
 export const alertStatusEnum = pgEnum("alert_status", [
@@ -149,6 +150,7 @@ export const alerts = pgTable("alerts", {
     .references(() => blocks.id),
   title: text("title").notNull(),
   description: text("description").notNull(),
+  banglishSummary: text("banglish_summary"),
   evidence: jsonb("evidence").notNull(),
   confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
   status: alertStatusEnum("status").notNull().default("open"),
@@ -156,6 +158,10 @@ export const alerts = pgTable("alerts", {
   predictedShortageAt: timestamp("predicted_shortage_at"),
   category: anomalyCategoryEnum("category"),
   votes: jsonb("votes"),
+  // Which simulation scenario (if any) tagged the transactions behind this alert's window —
+  // lets the validation-metrics endpoint tell "flagged a deliberately-triggered scenario" apart
+  // from "flagged ambient random-walk noise" without any manual labeling.
+  scenarioTag: text("scenario_tag"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at"),
 });

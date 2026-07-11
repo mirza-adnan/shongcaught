@@ -43,3 +43,27 @@ export async function generateText(options: AiGenerateOptions): Promise<{ text: 
 
   throw new AppError(`All AI providers failed. ${errors.join(" | ")}`, 502);
 }
+
+/**
+ * Queries every configured provider in parallel instead of stopping at the first success —
+ * for callers that want several independent model opinions on the same prompt (e.g. an LLM
+ * voting ensemble) rather than one answer with fallback redundancy. Providers that fail or
+ * time out are silently dropped from the result; it's up to the caller to decide what to do
+ * if fewer models answered than expected.
+ */
+export async function generateTextFromAllProviders(
+  options: AiGenerateOptions,
+): Promise<{ text: string; provider: string }[]> {
+  const configured = PROVIDER_CHAIN.filter((provider) => provider.isConfigured());
+
+  const settled = await Promise.allSettled(
+    configured.map(async (provider) => ({
+      text: await withTimeout(provider.generate(options), PROVIDER_TIMEOUT_MS),
+      provider: provider.name,
+    })),
+  );
+
+  return settled
+    .filter((r): r is PromiseFulfilledResult<{ text: string; provider: string }> => r.status === "fulfilled")
+    .map((r) => r.value);
+}

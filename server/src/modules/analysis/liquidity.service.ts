@@ -54,6 +54,7 @@ async function evaluate(
   provider: Provider | null,
   burn: BurnAnalysis,
   referenceTime: Date,
+  scenarioTag: string | null,
 ) {
   if (burn.burnPerHour >= 0 || burn.currentBalance <= 0) return null;
 
@@ -73,6 +74,11 @@ async function evaluate(
       ? " Confidence is reduced because recent transaction data is sparse or has gaps."
       : "");
 
+  const banglishSummary =
+    `${agent.name} er ${label} agami ${hoursToZero.toFixed(1)} ghontar modhye shesh hoye jete ` +
+    `pare (bortoman balance: ৳${Math.round(burn.currentBalance).toLocaleString()}). Eta ekta ` +
+    `purbanuman, guaranteed na — agent-er sathe jogajog kore nishchit korun.`;
+
   return upsertAlert({
     type: "liquidity",
     agentId: agent.id,
@@ -81,6 +87,7 @@ async function evaluate(
     severity: severityFor(hoursToZero),
     title: `${label} shortage projected — ${agent.name}`,
     description,
+    banglishSummary,
     evidence: {
       windowHours: WINDOW_HOURS,
       sampleCount: burn.sampleCount,
@@ -91,6 +98,7 @@ async function evaluate(
     },
     confidence,
     predictedShortageAt,
+    scenarioTag,
   });
 }
 
@@ -112,7 +120,8 @@ export async function analyzeLiquidity(agentId: string) {
     referenceTime,
     Number(agent.cashBalance),
   );
-  results.push(await evaluate(agent, null, cashBurn, referenceTime));
+  const cashScenarioTag = cashRows.find((r) => r.scenarioTag)?.scenarioTag ?? null;
+  results.push(await evaluate(agent, null, cashBurn, referenceTime, cashScenarioTag));
 
   for (const provider of PROVIDERS) {
     const balanceRow = balances.find((b) => b.provider === provider);
@@ -124,7 +133,8 @@ export async function analyzeLiquidity(agentId: string) {
       referenceTime,
       Number(balanceRow.balance),
     );
-    results.push(await evaluate(agent, provider, burn, referenceTime));
+    const providerScenarioTag = providerRows.find((r) => r.scenarioTag)?.scenarioTag ?? null;
+    results.push(await evaluate(agent, provider, burn, referenceTime, providerScenarioTag));
   }
 
   return results.filter((r) => r !== null);

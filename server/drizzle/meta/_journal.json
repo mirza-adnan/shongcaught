@@ -15,6 +15,20 @@
       "when": 1783762088430,
       "tag": "0001_talented_terrax",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783768934891,
+      "tag": "0002_cynical_hammerhead",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783800642419,
+      "tag": "0003_worried_gladiator",
+      "breakpoints": true
     }
   ]
 }

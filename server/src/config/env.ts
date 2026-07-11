@@ -6,7 +6,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   CLIENT_URLS: z
     .string()
-    .default("http://agent.localhost:5173,http://ops.localhost:5173")
+    .default("http://agent.localhost:5173,http://ops.localhost:5173,http://localhost:5173")
     .transform((value) => value.split(",").map((url) => url.trim())),
 
   DATABASE_URL: z.string(),

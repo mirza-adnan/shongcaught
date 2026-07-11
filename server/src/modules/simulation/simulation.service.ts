@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { agentProviderBalances, agents, daysOfInterest, parties, transactions } from "../../db/schema.js";
+import { agentProviderBalances, agents, blocks, daysOfInterest, parties, transactions } from "../../db/schema.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { analyzeAgent } from "../analysis/analysis.service.js";
 import {
@@ -16,7 +16,7 @@ const PROVIDERS: Provider[] = ["bkash", "nagad", "rocket"];
 const TICK_INTERVAL_MS = 2000;
 const ANALYSIS_COOLDOWN_MS = 20_000;
 const DEFAULT_SPEED_MULTIPLIER = 60;
-const DEFAULT_SCENARIO_DURATION_HOURS = 4;
+const DEFAULT_SCENARIO_DURATION_SECONDS = 4 * 60 * 60;
 
 interface AgentState {
   id: string;
@@ -45,6 +45,7 @@ let allPartyIds: string[] = [];
 let dayWindows: DayOfInterestWindow[] = [];
 const activeScenarios = new Map<string, ActiveScenario>();
 const lastAnalyzedRealMs = new Map<string, number>();
+let cachedFirstAgentId: string | null = null;
 
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -90,12 +91,37 @@ async function loadState() {
     endDate: row.endDate,
     multiplier: Number(row.expectedMultiplier),
   }));
+
+  cachedFirstAgentId = agentRows[0]?.id ?? null;
+  activeScenarios.clear();
+  lastAnalyzedRealMs.clear();
 }
 
+/**
+ * The in-memory cache is loaded once and mutated locally after that. If `npm run db:seed`
+ * truncates and regenerates the database while this process keeps running, the cache would
+ * otherwise silently reference agent/party/block ids that no longer exist, causing "Unknown
+ * agent" errors or FK-violation crashes deep in a tick. Detect that by checking whether a
+ * previously-cached agent id still resolves, and transparently reload if not.
+ */
 async function ensureLoaded() {
   if (agentStates.size === 0) {
     virtualNow = new Date();
     await loadState();
+    return;
+  }
+
+  if (cachedFirstAgentId) {
+    const [stillExists] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(eq(agents.id, cachedFirstAgentId))
+      .limit(1);
+
+    if (!stillExists) {
+      virtualNow = new Date();
+      await loadState();
+    }
   }
 }
 
@@ -213,6 +239,8 @@ async function tick() {
   ticking = true;
 
   try {
+    await ensureLoaded();
+
     const elapsedMs = TICK_INTERVAL_MS * speedMultiplier;
     virtualNow = new Date(virtualNow.getTime() + elapsedMs);
     const elapsedHours = elapsedMs / (60 * 60 * 1000);
@@ -262,6 +290,8 @@ async function tick() {
       lastAnalyzedRealMs.set(agent.id, now);
       analyzeAgent(agent.id).catch((err) => console.error(`Analysis failed for agent ${agent.id}:`, err));
     }
+  } catch (err) {
+    console.error("Simulation tick failed:", err);
   } finally {
     ticking = false;
   }
@@ -311,28 +341,36 @@ export function listScenarios() {
   return SCENARIOS;
 }
 
+export async function listBlocksForSelection() {
+  const rows = await db.select({ id: blocks.id, name: blocks.name }).from(blocks);
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function triggerScenario(params: {
-  agentId: string;
+  blockId: string;
   scenario: ScenarioName;
   provider: Provider;
-  durationHours?: number;
+  durationSeconds?: number;
 }) {
   await ensureLoaded();
 
-  if (!agentStates.has(params.agentId)) {
-    throw new AppError("Unknown agent", 404);
+  const targets = [...agentStates.values()].filter((agent) => agent.blockId === params.blockId);
+  if (targets.length === 0) {
+    throw new AppError("No agents found in that block", 404);
   }
 
-  const duration = params.durationHours ?? DEFAULT_SCENARIO_DURATION_HOURS;
-  const expiresAtVirtual = new Date(virtualNow.getTime() + duration * 60 * 60 * 1000);
+  const duration = params.durationSeconds ?? DEFAULT_SCENARIO_DURATION_SECONDS;
+  const expiresAtVirtual = new Date(virtualNow.getTime() + duration * 1000);
 
-  activeScenarios.set(params.agentId, {
-    scenario: params.scenario,
-    agentId: params.agentId,
-    provider: params.provider,
-    startedAtVirtual: virtualNow.toISOString(),
-    expiresAtVirtual: expiresAtVirtual.toISOString(),
-  });
+  for (const agent of targets) {
+    activeScenarios.set(agent.id, {
+      scenario: params.scenario,
+      agentId: agent.id,
+      provider: params.provider,
+      startedAtVirtual: virtualNow.toISOString(),
+      expiresAtVirtual: expiresAtVirtual.toISOString(),
+    });
+  }
 
   return getStatus();
 }

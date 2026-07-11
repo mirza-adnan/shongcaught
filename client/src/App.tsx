@@ -1,22 +1,25 @@
-import { AgentApp } from "@/apps/AgentApp";
-import { OpsApp } from "@/apps/OpsApp";
-import { DevPicker } from "@/apps/DevPicker";
+import { useAuthStore } from "@/store/useAuthStore";
+import { LoginPage } from "@/components/LoginPage";
+import { AgentDashboard } from "@/apps/AgentApp";
+import { OpsDashboard } from "@/apps/OpsApp";
+import { SimulatorPage } from "@/pages/SimulatorPage";
 import { Toaster } from "@/components/ui/sonner";
 
-function resolvePortal(hostname: string) {
-  if (hostname.startsWith("agent.")) return "agent";
-  if (hostname.startsWith("ops.")) return "ops";
-  return null;
-}
-
 function App() {
-  const portal = resolvePortal(window.location.hostname);
+  const isSimulatorRoute = window.location.pathname.startsWith("/simulator");
+  const user = useAuthStore((state) => state.user);
 
   return (
     <>
-      {portal === "agent" && <AgentApp />}
-      {portal === "ops" && <OpsApp />}
-      {portal === null && <DevPicker />}
+      {isSimulatorRoute ? (
+        <SimulatorPage />
+      ) : !user ? (
+        <LoginPage />
+      ) : user.role === "agent" ? (
+        <AgentDashboard />
+      ) : (
+        <OpsDashboard />
+      )}
       <Toaster />
     </>
   );

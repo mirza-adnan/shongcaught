@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { agents, type AlertSeverity, type AnomalyCategory, type Provider } from "../../db/schema.js";
-import { generateText } from "../ai/ai.service.js";
+import { generateTextFromAllProviders } from "../ai/ai.service.js";
 import { abstain, type VoterResult } from "./analysis.types.js";
 import { getLatestTransactionTime, getRecentTransactions, upsertAlert } from "./analysis.shared.js";
 
@@ -18,6 +19,67 @@ const ALLOWED_CATEGORIES: AnomalyCategory[] = [
   "other",
 ];
 const ALLOWED_SEVERITIES: AlertSeverity[] = ["low", "medium", "high", "critical"];
+const CATEGORY_SPECIFICITY: Record<AnomalyCategory, number> = {
+  near_identical_amounts: 2,
+  structuring: 2,
+  circular: 2,
+  balance_inconsistency: 2,
+  velocity: 1,
+  other: 0,
+};
+
+// "velocity" just means "more activity than usual" and fires alongside almost any other
+// pattern (every injected scenario also raises transaction volume) — when it ties with a more
+// specific category on vote count, the specific one is more useful to a reviewer and should
+// win, rather than an arbitrary tiebreak by confidence (velocity's confidence cap is
+// structurally close to the others', so it would otherwise win most ties by a hair). Shared by
+// the outer 5-check ensemble and the inner 3-model LLM sub-ensemble below, which both need to
+// pick one category out of several that fired.
+function pickMajorityCategory(items: { category: AnomalyCategory; confidence: number }[]): AnomalyCategory {
+  const stats = new Map<AnomalyCategory, { count: number; confidenceSum: number }>();
+  for (const item of items) {
+    const s = stats.get(item.category) ?? { count: 0, confidenceSum: 0 };
+    s.count += 1;
+    s.confidenceSum += item.confidence;
+    stats.set(item.category, s);
+  }
+
+  return [...stats.entries()].sort(
+    (a, b) =>
+      b[1].count - a[1].count ||
+      CATEGORY_SPECIFICITY[b[0]] - CATEGORY_SPECIFICITY[a[0]] ||
+      b[1].confidenceSum - a[1].confidenceSum,
+  )[0]![0];
+}
+
+// The LLM voter is the slow/rate-limited/quota-costing one. Its judgment for a given prompt
+// doesn't need to be re-derived every 20s if nothing about that prompt has changed — key the
+// cache on a hash of the exact prompt text (not a hand-picked signature of the rows) so any
+// change that would actually alter what the LLM sees forces a fresh call, and identical inputs
+// always hit the cache.
+const LLM_CACHE_TTL_MS = 3 * 60 * 1000;
+interface LlmCacheEntry {
+  result: VoterResult;
+  expiresAt: number;
+}
+const llmCache = new Map<string, LlmCacheEntry>();
+
+function hashPrompt(prompt: string): string {
+  return createHash("sha256").update(prompt).digest("hex");
+}
+
+async function cachedLlmVoter(prompt: string): Promise<VoterResult> {
+  const key = hashPrompt(prompt);
+  const cached = llmCache.get(key);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
+  }
+
+  const result = await llmEnsembleVoter(prompt).catch(() => abstain("llm"));
+  llmCache.set(key, { result, expiresAt: Date.now() + LLM_CACHE_TTL_MS });
+  return result;
+}
 
 type TxRow = Awaited<ReturnType<typeof getRecentTransactions>>[number];
 
@@ -143,7 +205,7 @@ function balanceReconciliationVoter(rows: TxRow[]): VoterResult {
   };
 }
 
-async function llmVoter(agentName: string, provider: Provider, rows: TxRow[]): Promise<VoterResult> {
+function buildLlmPrompt(provider: Provider, rows: TxRow[]): string {
   const summary = {
     windowHours: WINDOW_HOURS,
     transactionCount: rows.length,
@@ -152,7 +214,7 @@ async function llmVoter(agentName: string, provider: Provider, rows: TxRow[]): P
     failedCount: rows.filter((r) => r.status === "failed").length,
   };
 
-  const prompt =
+  return (
     `You are assisting a mobile-money operations analyst. You NEVER declare fraud — only flag ` +
     `patterns as "unusual" or "requires review" with a category and severity, for a human to ` +
     `investigate.\n` +
@@ -161,28 +223,91 @@ async function llmVoter(agentName: string, provider: Provider, rows: TxRow[]): P
     `Categories: velocity, near_identical_amounts, structuring, circular, balance_inconsistency, other.\n` +
     `Respond with strict JSON only, no markdown: {"fired": boolean, "category": string, ` +
     `"severity": "low"|"medium"|"high"|"critical", "confidence": number between 0 and 1, ` +
-    `"rationale": string under 200 characters}. If nothing seems unusual, set fired to false.`;
+    `"rationale": string under 200 characters}. If nothing seems unusual, set fired to false.`
+  );
+}
+
+interface LlmModelVerdict {
+  provider: string;
+  fired: boolean;
+  category: AnomalyCategory;
+  severity: AlertSeverity;
+  confidence: number;
+  rationale: string;
+}
+
+function parseLlmResponse(provider: string, text: string): LlmModelVerdict | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
 
   try {
-    const { text } = await generateText({ prompt, temperature: 0.2, maxTokens: 300 });
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("No JSON in LLM response");
-
     const parsed = JSON.parse(match[0]);
-    const category = ALLOWED_CATEGORIES.includes(parsed.category) ? parsed.category : "other";
-    const severity = ALLOWED_SEVERITIES.includes(parsed.severity) ? parsed.severity : "low";
-
     return {
-      voter: "llm",
+      provider,
       fired: Boolean(parsed.fired),
-      category,
-      severity,
+      category: ALLOWED_CATEGORIES.includes(parsed.category) ? parsed.category : "other",
+      severity: ALLOWED_SEVERITIES.includes(parsed.severity) ? parsed.severity : "low",
       confidence: typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
-      rationale: String(parsed.rationale ?? "").slice(0, 300),
+      rationale: String(parsed.rationale ?? "").slice(0, 200),
     };
   } catch {
-    return { voter: "llm", fired: false, confidence: 0, rationale: "LLM voter unavailable for this check." };
+    return null;
   }
+}
+
+// Queries all 3 configured providers (Groq, Gemini, OpenRouter) in parallel with the same
+// prompt and combines their independent judgments into a single verdict — a strict majority
+// of the models that actually answered must agree something's fired, rather than any one
+// model's opinion deciding alone. This also gives redundancy against a single provider being
+// rate-limited/out of quota (a real, repeated issue in this project): the ensemble still
+// produces a verdict as long as at least one model responds, and gets more confident as more
+// of them agree.
+async function llmEnsembleVoter(prompt: string): Promise<VoterResult> {
+  const responses = await generateTextFromAllProviders({ prompt, temperature: 0.2, maxTokens: 300 });
+  const verdicts = responses
+    .map((r) => parseLlmResponse(r.provider, r.text))
+    .filter((v): v is LlmModelVerdict => v !== null);
+
+  if (verdicts.length === 0) {
+    return {
+      voter: "llm",
+      fired: false,
+      confidence: 0,
+      rationale: "LLM ensemble unavailable for this check (every provider failed, timed out, or is rate-limited).",
+    };
+  }
+
+  const firedVerdicts = verdicts.filter((v) => v.fired);
+  const fired = firedVerdicts.length * 2 > verdicts.length;
+
+  if (!fired) {
+    return {
+      voter: "llm",
+      fired: false,
+      confidence: (verdicts.reduce((s, v) => s + v.confidence, 0) / verdicts.length) * 0.3,
+      rationale: `${firedVerdicts.length}/${verdicts.length} model(s) (${verdicts.map((v) => v.provider).join(", ")}) flagged this window — not a majority.`,
+    };
+  }
+
+  const category = pickMajorityCategory(firedVerdicts);
+  const severity = firedVerdicts.reduce<AlertSeverity>(
+    (max, v) => (SEVERITY_RANK[v.severity] > SEVERITY_RANK[max] ? v.severity : max),
+    "low",
+  );
+  const confidence =
+    (firedVerdicts.length / verdicts.length) *
+    (firedVerdicts.reduce((s, v) => s + v.confidence, 0) / firedVerdicts.length);
+
+  return {
+    voter: "llm",
+    fired: true,
+    category,
+    severity,
+    confidence,
+    rationale: `${firedVerdicts.length}/${verdicts.length} models agreed: ${firedVerdicts
+      .map((v) => `${v.provider} — ${v.rationale}`)
+      .join(" | ")}`,
+  };
 }
 
 async function analyzeAgentProvider(
@@ -193,22 +318,28 @@ async function analyzeAgentProvider(
   const recentRows = await getRecentTransactions(agent.id, provider, WINDOW_HOURS, referenceTime);
   if (recentRows.length < 3) return null;
 
-  const voters = await Promise.all([
+  const cheapVoters = await Promise.all([
     velocityVoter(agent.id, provider, recentRows, referenceTime),
     Promise.resolve(nearIdenticalVoter(recentRows)),
     Promise.resolve(structuringVoter(recentRows)),
     Promise.resolve(balanceReconciliationVoter(recentRows)),
-    llmVoter(agent.name, provider, recentRows).catch(() => abstain("llm")),
   ]);
+
+  // The ensemble needs >=2/5 voters to fire before an alert is written (see below), and the
+  // LLM is only 1 of those 5 — so if none of the 4 cheap voters fired, an LLM "fired" alone
+  // could never reach the threshold anyway. Skip the (rate-limited, quota-costing) LLM call
+  // entirely in that case rather than burning a request on a result that can't matter.
+  const anyCheapFired = cheapVoters.some((v) => v.fired);
+  const llmResult = anyCheapFired
+    ? await cachedLlmVoter(buildLlmPrompt(provider, recentRows))
+    : abstain("llm");
+
+  const voters = [...cheapVoters, llmResult];
 
   const firing = voters.filter((v) => v.fired);
   if (firing.length < 2) return null;
 
-  const categoryCounts = new Map<AnomalyCategory, number>();
-  for (const v of firing) {
-    categoryCounts.set(v.category!, (categoryCounts.get(v.category!) ?? 0) + 1);
-  }
-  const category = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+  const category = pickMajorityCategory(firing.map((v) => ({ category: v.category!, confidence: v.confidence })));
 
   const severity = firing.reduce<AlertSeverity>(
     (max, v) => (SEVERITY_RANK[v.severity!] > SEVERITY_RANK[max] ? v.severity! : max),
@@ -217,10 +348,24 @@ async function analyzeAgentProvider(
 
   const confidence = (firing.length / voters.length) * (firing.reduce((s, v) => s + v.confidence, 0) / firing.length);
 
+  const llmVote = voters.find((v) => v.voter === "llm");
+  const llmReason = llmVote?.fired ? ` Model reasoning: ${llmVote.rationale}` : "";
+
+  // Ground truth for the validation-metrics endpoint: if this window overlaps a deliberately
+  // triggered simulation scenario, tag the alert with it — an alert with no scenario tag means
+  // it fired purely from ambient random-walk noise (a real false positive, not a demo scenario).
+  const scenarioTag = recentRows.find((r) => r.scenarioTag)?.scenarioTag ?? null;
+
   const description =
     `${firing.length} of ${voters.length} independent checks flagged this pattern as unusual ` +
     `(${category.replace(/_/g, " ")}) on ${provider}. This is not a fraud determination — please ` +
-    `review the evidence below before taking any action.`;
+    `review the evidence below before taking any action.${llmReason}`;
+
+  const banglishSummary =
+    `${agent.name} (${provider}) te ${category.replace(/_/g, " ")} dhoroner kisu asvabhabik ` +
+    `lenden dekha jacche (${firing.length}/${voters.length} check dhoreche, ` +
+    `${Math.round(confidence * 100)}% nishchoyota). Eta jaliyati bole dhore neya jabe na — ` +
+    `review korar jonno onurodh kora hocche.`;
 
   return upsertAlert({
     type: "anomaly",
@@ -230,10 +375,12 @@ async function analyzeAgentProvider(
     severity,
     title: `Unusual activity requires review — ${agent.name} (${provider})`,
     description,
+    banglishSummary,
     evidence: { windowHours: WINDOW_HOURS, transactionCount: recentRows.length },
     confidence,
     category,
     votes: voters,
+    scenarioTag,
   });
 }
 

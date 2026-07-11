@@ -3,6 +3,8 @@ import { authRouter } from "../modules/auth/auth.routes.js";
 import { aiRouter } from "../modules/ai/ai.routes.js";
 import { simulationRouter } from "../modules/simulation/simulation.routes.js";
 import { analysisRouter } from "../modules/analysis/analysis.routes.js";
+import { agentsRouter } from "../modules/agents/agents.routes.js";
+import { daysOfInterestRouter } from "../modules/daysOfInterest/daysOfInterest.routes.js";
 
 export const apiRouter = Router();
 
@@ -14,3 +16,5 @@ apiRouter.use("/auth", authRouter);
 apiRouter.use("/ai", aiRouter);
 apiRouter.use("/simulation", simulationRouter);
 apiRouter.use("/analysis", analysisRouter);
+apiRouter.use("/agents", agentsRouter);
+apiRouter.use("/days-of-interest", daysOfInterestRouter);
