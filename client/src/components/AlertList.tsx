@@ -122,12 +122,12 @@ export function AlertList({
 
             {onAction && alert.status !== "resolved" && (
               <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                {alert.status === "open" && (
+                {alert.status === "open" && alert.type === "anomaly" && (
                   <Button variant="outline" size="sm" onClick={() => onAction(alert.id, "acknowledge")}>
-                    {alert.type === "trend" ? "Alert all agents in block" : "Alert agent"}
+                    Alert agent
                   </Button>
                 )}
-                {alert.type !== "trend" && alert.status !== "escalated" && (
+                {alert.type === "anomaly" && alert.status !== "escalated" && (
                   <Button
                     variant="outline"
                     size="sm"

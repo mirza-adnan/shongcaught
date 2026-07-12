@@ -39,9 +39,11 @@ export async function listAlertsHandler(req: Request, res: Response) {
 
     // Agents see their own alerts, plus block-level trend forecasts (agentId null) for their
     // own block — those are written with no agentId since they aren't about any single agent.
-    // "open" alerts are excluded: that status means ops hasn't acted on it yet ("Alert agent"
-    // moves it to "acknowledged"), so agents shouldn't see an alert before ops has actually
-    // decided to notify them about it.
+    // Liquidity and trend alerts reach the agent automatically (they're informational/
+    // forward-looking, not something requiring a human judgment call first). Anomaly alerts
+    // stay gated behind an "open" status: ops has to actually review the evidence and choose
+    // to notify the agent ("Alert agent" moves it to "acknowledged") before it's shown, since
+    // an anomaly flag is never allowed to look like an accusation without a human in the loop.
     const blockId = await resolveEffectiveBlockId({ role: "agent", agentId: req.agentId });
 
     const rows = await db
@@ -49,7 +51,7 @@ export async function listAlertsHandler(req: Request, res: Response) {
       .from(alerts)
       .where(
         and(
-          ne(alerts.status, "open"),
+          or(ne(alerts.type, "anomaly"), ne(alerts.status, "open")),
           isNull(alerts.agentAcknowledgedAt),
           or(
             eq(alerts.agentId, req.agentId),

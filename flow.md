@@ -146,15 +146,22 @@ entry live.
 
 **What it is:** Every alert has an owner (the block's ops account), a status
 (open → acknowledged → escalated/resolved), and a full **audit trail** (`caseEvents`) of who did
-what and when. Ops can alert the agent, escalate to risk/compliance, or dismiss — every action
-writes a timestamped case event.
+what and when. Liquidity and trend (demand-forecast) alerts reach the agent automatically —
+they're informational, not an accusation, so there's no gate. Anomaly alerts are the one type
+that stays human-gated: ops has to review the evidence and explicitly click "Alert agent"
+before the agent sees it, since an anomaly flag should never reach someone without a person
+having looked at it first. Escalating to risk/compliance is anomaly-only for the same reason
+(liquidity/trend are informational, nothing to escalate); every alert type can still be
+dismissed, each action writing a timestamped case event.
 
 **Judge talking point:** This is the **human-in-the-loop safety net** the whole system is built
 around — nothing here executes a real transaction or makes a final determination; every alert
 ends in a human decision, with a permanent record of that decision.
 
-**Demo:** Click an alert, walk through Alert agent → Escalate → Dismiss, and mention the case
-event log backing it.
+**Demo:** Trigger an anomaly scenario, click the alert, walk through Alert agent → Escalate →
+Dismiss, and mention the case event log backing it — then point out a liquidity or trend alert
+sitting on the same dashboard with no Alert agent button at all, because it already reached the
+agent on its own.
 
 ---
 
@@ -201,7 +208,10 @@ itself, not just in a README.
 3. Open a liquidity alert → evidence → confidence.
 4. Open an anomaly alert → 5-voter breakdown → LLM reasoning.
 5. Point out the block-level trend alert and the Days of Interest panel.
-6. Run through Alert agent → Escalate → Dismiss on one alert.
-7. Log out, log in as **agent0001** — show the same trend alert appears here too (block-wide,
-   not ops-only), and show the personal balance view.
+6. Run through Alert agent → Escalate → Dismiss on an anomaly alert specifically — it's the
+   only type with Alert agent/Escalate buttons; a liquidity or trend alert only ever shows
+   Dismiss, since there's nothing to gate or escalate on an informational forecast.
+7. Log out, log in as **agent0001** — show the liquidity and trend alerts already sitting there
+   with no ops action needed (block-wide trend alert included), and show the personal balance
+   view.
 8. Close on the Validation Metrics panel — real measured false-positive rate, not a guess.

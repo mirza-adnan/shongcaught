@@ -1,7 +1,8 @@
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { agentProviderBalances, agents, blocks, parties, transactions } from "../../db/schema.js";
+import { agentProviderBalances, agents, blocks, cashAdjustments, parties, transactions } from "../../db/schema.js";
 import { AppError } from "../../middleware/errorHandler.js";
+import { syncAgentCash } from "../simulation/simulation.service.js";
 
 async function withBalances<T extends { id: string }>(agentRows: T[]) {
   if (agentRows.length === 0) return [];
@@ -41,6 +42,33 @@ export async function getBlock(blockId: string) {
   const [block] = await db.select().from(blocks).where(eq(blocks.id, blockId));
   if (!block) throw new AppError("Block not found", 404);
   return block;
+}
+
+export async function updateCashBalance(agentId: string, newBalance: number, note: string | undefined) {
+  const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+  if (!agent) throw new AppError("Agent not found", 404);
+
+  const previousBalance = agent.cashBalance;
+
+  const [updated] = await db
+    .update(agents)
+    .set({ cashBalance: newBalance.toFixed(2) })
+    .where(eq(agents.id, agentId))
+    .returning();
+
+  await db.insert(cashAdjustments).values({
+    agentId,
+    previousBalance,
+    newBalance: newBalance.toFixed(2),
+    note: note ?? null,
+  });
+
+  // Keep the simulation engine's in-memory cash figure in sync — otherwise its next tick for
+  // this agent would overwrite this correction with its own stale cached value.
+  syncAgentCash(agentId, newBalance);
+
+  const [withBalance] = await withBalances([updated!]);
+  return withBalance;
 }
 
 export async function getRecentTransactionsForAgent(agentId: string, limit = 30) {

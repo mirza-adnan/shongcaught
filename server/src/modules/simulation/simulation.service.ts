@@ -326,6 +326,19 @@ export async function startSimulation(speed?: number) {
   return getStatus();
 }
 
+/**
+ * The simulation keeps its own in-memory copy of each agent's cash (`agentStates`) and writes
+ * it back to `agents.cashBalance` on ticks that touch that agent — so a manual DB update alone
+ * would silently get overwritten by the stale in-memory value on the next tick, the same class
+ * of bug `ensureLoaded()`'s self-heal fixes for reseeds. Call this right after writing a manual
+ * correction to keep the live cache in sync. A no-op if the simulation isn't running or hasn't
+ * loaded this agent yet — the DB write is what matters in that case.
+ */
+export function syncAgentCash(agentId: string, newCash: number) {
+  const state = agentStates.get(agentId);
+  if (state) state.cash = newCash;
+}
+
 export function stopSimulation() {
   running = false;
   if (intervalHandle) {

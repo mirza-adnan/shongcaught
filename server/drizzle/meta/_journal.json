@@ -50,6 +50,13 @@
       "when": 1783807096566,
       "tag": "0006_open_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783842001077,
+      "tag": "0007_dapper_kate_bishop",
+      "breakpoints": true
     }
   ]
 }

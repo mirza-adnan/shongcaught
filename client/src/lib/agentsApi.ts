@@ -45,3 +45,9 @@ export function getMyTransactions() {
     .get<{ transactions: AgentTransaction[] }>("/agents/me/transactions")
     .then((res) => res.data.transactions);
 }
+
+export function updateMyCash(balance: number, note?: string) {
+  return api
+    .patch<{ agent: AgentWithBalances }>("/agents/me/cash", { balance, note })
+    .then((res) => res.data.agent);
+}

@@ -182,6 +182,20 @@ export const caseEvents = pgTable("case_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Audit trail for an agent manually correcting their own physical cash figure (e.g. after
+// actually counting the till) — kept separate from transactions since it's a self-reported
+// correction, not a mobile-money event.
+export const cashAdjustments = pgTable("cash_adjustments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id),
+  previousBalance: numeric("previous_balance", { precision: 14, scale: 2 }).notNull(),
+  newBalance: numeric("new_balance", { precision: 14, scale: 2 }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Block = typeof blocks.$inferSelect;
@@ -195,3 +209,4 @@ export type DayOfInterest = typeof daysOfInterest.$inferSelect;
 export type Alert = typeof alerts.$inferSelect;
 export type NewAlert = typeof alerts.$inferInsert;
 export type CaseEvent = typeof caseEvents.$inferSelect;
+export type CashAdjustment = typeof cashAdjustments.$inferSelect;

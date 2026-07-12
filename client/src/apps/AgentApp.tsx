@@ -2,11 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppHeader } from "@/components/AppHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { AlertList } from "@/components/AlertList";
 import { TransactionFeed } from "@/components/TransactionFeed";
 import { DaysOfInterestPanel } from "@/components/DaysOfInterestPanel";
 import { useAuthStore } from "@/store/useAuthStore";
-import { getMyAgent, getMyTransactions, type AgentTransaction, type AgentWithBalances } from "@/lib/agentsApi";
+import {
+  getMyAgent,
+  getMyTransactions,
+  updateMyCash,
+  type AgentTransaction,
+  type AgentWithBalances,
+} from "@/lib/agentsApi";
 import {
   agentAckAlert,
   listAlerts,
@@ -30,6 +38,10 @@ export function AgentDashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [transactions, setTransactions] = useState<AgentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingCash, setEditingCash] = useState(false);
+  const [cashInput, setCashInput] = useState("");
+  const [cashNote, setCashNote] = useState("");
+  const [savingCash, setSavingCash] = useState(false);
   const seenAlertIds = useRef<Set<string> | null>(null);
 
   async function load() {
@@ -87,6 +99,32 @@ export function AgentDashboard() {
     }
   }
 
+  function startEditingCash() {
+    setCashInput(agent ? Number(agent.cashBalance).toString() : "");
+    setCashNote("");
+    setEditingCash(true);
+  }
+
+  async function handleSaveCash() {
+    const balance = Number(cashInput);
+    if (!Number.isFinite(balance) || balance < 0) {
+      toast.error("Enter a valid, non-negative amount");
+      return;
+    }
+
+    setSavingCash(true);
+    try {
+      const updated = await updateMyCash(balance, cashNote || undefined);
+      setAgent(updated);
+      setEditingCash(false);
+      toast.success("Physical cash updated");
+    } catch {
+      toast.error("Could not update your cash balance");
+    } finally {
+      setSavingCash(false);
+    }
+  }
+
   async function handleRequestSupport(alertId: string) {
     const note = window.prompt("What do you need help with?");
     if (!note) return;
@@ -124,9 +162,47 @@ export function AgentDashboard() {
         ) : (
           <>
             <section>
-              <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-                {agent.name} — {agent.phone}
-              </h2>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-medium text-muted-foreground">
+                  {agent.name} — {agent.phone}
+                </h2>
+                {!editingCash && (
+                  <Button variant="outline" size="sm" onClick={startEditingCash}>
+                    Update Cash
+                  </Button>
+                )}
+              </div>
+
+              {editingCash && (
+                <div className="mb-4 flex flex-col gap-2 rounded-lg border border-border/60 p-4">
+                  <p className="text-xs font-medium text-muted-foreground">Update physical cash</p>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={cashInput}
+                    onChange={(e) => setCashInput(e.target.value)}
+                    autoFocus
+                  />
+                  <Input
+                    placeholder="Note (optional, e.g. after counting the till)"
+                    value={cashNote}
+                    onChange={(e) => setCashNote(e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={savingCash} onClick={handleSaveCash}>
+                      {savingCash ? "Saving..." : "Save"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={savingCash}
+                      onClick={() => setEditingCash(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {mostUrgent && (
                 <div className="mb-4 rounded-lg border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-500">
