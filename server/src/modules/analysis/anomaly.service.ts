@@ -7,7 +7,10 @@ import {
     type AnomalyCategory,
     type Provider,
 } from "../../db/schema.js";
-import { generateText } from "../ai/ai.service.js";
+import {
+    generateText,
+    generateTextFromAllProviders,
+} from "../ai/ai.service.js";
 import { abstain, type VoterResult } from "./analysis.types.js";
 import {
     getLatestTransactionTime,
@@ -350,6 +353,112 @@ async function llmVoter(prompt: string): Promise<VoterResult> {
     }
 }
 
+interface LlmModelVerdict {
+    provider: string;
+    fired: boolean;
+    category: AnomalyCategory;
+    severity: AlertSeverity;
+    confidence: number;
+    rationale: string;
+}
+
+function parseLlmResponse(
+    provider: string,
+    text: string,
+): LlmModelVerdict | null {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    try {
+        const parsed = JSON.parse(match[0]);
+        return {
+            provider,
+            fired: Boolean(parsed.fired),
+            category: ALLOWED_CATEGORIES.includes(parsed.category)
+                ? parsed.category
+                : "other",
+            severity: ALLOWED_SEVERITIES.includes(parsed.severity)
+                ? parsed.severity
+                : "low",
+            confidence:
+                typeof parsed.confidence === "number"
+                    ? Math.max(0, Math.min(1, parsed.confidence))
+                    : 0.5,
+            rationale: String(parsed.rationale ?? "").slice(0, 200),
+        };
+    } catch {
+        return null;
+    }
+}
+
+// Queries all configured providers in parallel with the same prompt and combines their
+// independent judgments into a single verdict — a strict majority of the models that actually
+// answered must agree something's fired, rather than any one model's opinion deciding alone.
+// This also gives redundancy against a single provider being rate-limited/out of quota: the
+// ensemble still produces a verdict as long as at least one model responds, and gets more
+// confident as more of them agree.
+//
+// NOT wired into the pipeline — analyzeAgentProvider calls cachedLlmVoter/llmVoter (a single
+// fallback-chain call via generateText), same as before. This is kept only as a reference
+// implementation of the 3-model consensus design the anomaly ensemble briefly used.
+async function llmEnsembleVoter(prompt: string): Promise<VoterResult> {
+    const responses = await generateTextFromAllProviders({
+        prompt,
+        temperature: 0.2,
+        maxTokens: 300,
+    });
+    const verdicts = responses
+        .map((r) => parseLlmResponse(r.provider, r.text))
+        .filter((v): v is LlmModelVerdict => v !== null);
+
+    if (verdicts.length === 0) {
+        return {
+            voter: "llm",
+            fired: false,
+            confidence: 0,
+            rationale:
+                "LLM ensemble unavailable for this check (every provider failed, timed out, or is rate-limited).",
+        };
+    }
+
+    const firedVerdicts = verdicts.filter((v) => v.fired);
+    const fired = firedVerdicts.length * 2 > verdicts.length;
+
+    if (!fired) {
+        return {
+            voter: "llm",
+            fired: false,
+            confidence:
+                (verdicts.reduce((s, v) => s + v.confidence, 0) /
+                    verdicts.length) *
+                0.3,
+            rationale: `${firedVerdicts.length}/${verdicts.length} model(s) (${verdicts.map((v) => v.provider).join(", ")}) flagged this window — not a majority.`,
+        };
+    }
+
+    const category = pickMajorityCategory(firedVerdicts);
+    const severity = firedVerdicts.reduce<AlertSeverity>(
+        (max, v) =>
+            SEVERITY_RANK[v.severity] > SEVERITY_RANK[max] ? v.severity : max,
+        "low",
+    );
+    const confidence =
+        (firedVerdicts.length / verdicts.length) *
+        (firedVerdicts.reduce((s, v) => s + v.confidence, 0) /
+            firedVerdicts.length);
+
+    return {
+        voter: "llm",
+        fired: true,
+        category,
+        severity,
+        confidence,
+        rationale: `${firedVerdicts.length}/${verdicts.length} models agreed: ${firedVerdicts
+            .map((v) => `${v.provider} — ${v.rationale}`)
+            .join(" | ")}`,
+    };
+}
+
 async function analyzeAgentProvider(
     agent: { id: string; blockId: string; name: string },
     provider: Provider,
@@ -461,3 +570,5 @@ export async function analyzeAnomaly(agentId: string) {
 function getIsolationForest(transaction: any) {
     return true;
 }
+
+const used = [llmEnsembleVoter];
